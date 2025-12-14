@@ -64,6 +64,11 @@ export const MapViewer: React.FC<MapViewerProps> = ({ points, onDeletePoint }) =
             <p class="text-base text-gray-500 mb-2 font-medium">จุดเริ่มต้นส่งสินค้า</p>
           </div>
         `);
+
+      // Fix: Force map to recalculate size after render to prevent grey areas
+      setTimeout(() => {
+        mapInstanceRef.current.invalidateSize();
+      }, 200);
     }
 
     const map = mapInstanceRef.current;

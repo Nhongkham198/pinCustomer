@@ -27,6 +27,16 @@
       .leaflet-pane { z-index: 10; }
       .leaflet-top, .leaflet-bottom { z-index: 20; }
       
+      /* CRITICAL FIX: Tailwind sets img max-width to 100%, which breaks Leaflet tiles. */
+      /* This restores the default behavior for Leaflet images. */
+      .leaflet-pane img, 
+      .leaflet-tile, 
+      .leaflet-marker-icon, 
+      .leaflet-marker-shadow {
+        max-width: none !important;
+        max-height: none !important;
+      }
+      
       /* App-like feel: Prevent text selection and rubber-band scrolling */
       body { 
         -webkit-user-select: none; 
