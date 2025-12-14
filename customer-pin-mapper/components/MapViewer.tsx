@@ -71,6 +71,22 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     }
   };
 
+  // Helper: คำนวณระยะทาง (Haversine Formula) เป็นเมตร
+  const getDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // Earth radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+  };
+
   // Helper: สร้าง/อัปเดตหมุดตำแหน่งผู้ใช้
   const updateUserMarker = (lat: number, lng: number, accuracy: number) => {
     if (!mapInstanceRef.current || !window.L) return;
@@ -151,6 +167,34 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
     if (usingShopLocation) {
        onShowToast("ไม่พบพิกัดปัจจุบัน ใช้ตำแหน่งร้านเป็นจุดเริ่ม", "info");
+    }
+
+    // --- SMART ROUTING: ตรวจสอบระยะทางก่อน ---
+    const distanceMeters = getDistanceMeters(startLat, startLng, destLat, destLng);
+    
+    // ถ้าใกล้กว่า 100 เมตร: ไม่ต้องใช้ API, วาดเส้นตรงเลย (ป้องกันการพาอ้อม)
+    if (distanceMeters < 100) {
+        if (routeLayerRef.current) mapInstanceRef.current.removeLayer(routeLayerRef.current);
+        
+        onShowToast(`อยู่ใกล้เป้าหมาย (${Math.round(distanceMeters)} ม.)`, "success");
+
+        routeLayerRef.current = L.polyline([[startLat, startLng], [destLat, destLng]], {
+            color: '#10b981', // สีเขียว (ใกล้ถึงแล้ว)
+            weight: 6,
+            opacity: 0.9,
+            dashArray: '1, 10',
+            lineCap: 'round'
+        }).addTo(mapInstanceRef.current);
+
+        setTimeout(() => {
+          if(routeLayerRef.current) {
+            routeLayerRef.current.setStyle({ dashArray: null });
+          }
+        }, 100);
+
+        mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [100, 100] });
+        document.body.style.cursor = 'default';
+        return; // จบการทำงานทันที ไม่ต้องเรียก API
     }
 
     try {
