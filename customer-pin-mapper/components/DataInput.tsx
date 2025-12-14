@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { CustomerPoint } from '../types';
-import { Plus, Table, Trash2, HelpCircle, Download, FileText, ExternalLink, X } from 'lucide-react';
+import { Plus, Trash2, HelpCircle, Download, FileText, ExternalLink, X } from 'lucide-react';
 
 interface DataInputProps {
   onDataParsed: (data: CustomerPoint[], append: boolean) => void;
   points: CustomerPoint[];
+  isOpen: boolean;        // ควบคุมการเปิดปิดจาก App.tsx
+  onClose: () => void;    // ฟังก์ชันปิดจาก App.tsx
 }
 
 // ลิงก์ Google Sheet ของลูกค้า
@@ -15,9 +17,8 @@ const SAMPLE_DATA = `2025-12-14	06:34:59	#01	คุณต้น	...	...	...	http
 2025-12-14	06:40:00	#02	คุณหญิง	...	...	...	https://www.google.com/maps?q=16.435000,103.500000
 2025-12-14	07:00:23	#03	ร้านกาแฟ A	...	...	...	https://www.google.com/maps?q=16.445000,103.490000`;
 
-export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points }) => {
+export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points, isOpen, onClose }) => {
   const [inputText, setInputText] = useState('');
-  const [isOpen, setIsOpen] = useState(true);
   const [appendMode, setAppendMode] = useState(true);
 
   const extractCoordsFromUrl = (url: string): { lat: number, lng: number } | null => {
@@ -45,8 +46,7 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points }) =>
       let parts = line.split('\t');
       if (parts.length <= 1) parts = line.split(',');
       
-      // ลบช่องว่างและกรองข้อมูลเปล่าทิ้ง (บางที copy มามีช่องว่างเยอะ)
-      // แต่ต้องระวังไม่ filter จน index เพี้ยนถ้า copy มาแบบ full row
+      // ลบช่องว่างและกรองข้อมูลเปล่าทิ้ง
       parts = parts.map(p => p.trim());
 
       let lat: number | null = null;
@@ -62,25 +62,17 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points }) =>
           lat = coords.lat;
           lng = coords.lng;
 
-          // 2. Logic การหาชื่อ (Name Detection Heuristic)
-          
+          // 2. Logic การหาชื่อ
           if (parts.length > 6) {
-             // Case A: Copy มาทั้งบรรทัด (Full Row)
-             // โครงสร้าง: Date, Time, ID, Name(Col D), ...
-             // Name มักจะอยู่ที่ index 3
              if (parts[3]) name = parts[3];
           } else if (parts.length === 2) {
-             // Case B: Copy มาแค่ 2 ช่อง (ชื่อ กับ ลิงก์)
-             // ชื่อคือช่องที่ไม่ใช่ลิงก์
              name = parts[mapLinkIndex === 0 ? 1 : 0];
           } else if (parts.length >= 3 && parts.length <= 6) {
-             // Case C: Copy แบบช่วง (Range) เช่น ลากจาก ชื่อ(D) ถึง ลิงก์(H)
-             // ช่องแรกมักจะเป็นชื่อ
              name = parts[0];
           }
         }
       } else {
-        // Fallback: รองรับ CSV แบบเก่า (Lat, Lng)
+        // Fallback: รองรับ CSV แบบเก่า
         if (parts.length >= 2) {
            const tryLat = parseFloat(parts[0]);
            const tryLng = parseFloat(parts[1]);
@@ -105,7 +97,7 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points }) =>
     if (parsedPoints.length > 0) {
       onDataParsed(parsedPoints, appendMode);
       setInputText('');
-      setIsOpen(false);
+      onClose(); // ปิด Modal เมื่อสำเร็จ
     } else {
       alert('ไม่พบข้อมูลพิกัดแผนที่ที่ถูกต้อง\nกรุณาตรวจสอบว่า Copy ลิงก์ Google Maps มาด้วยหรือไม่');
     }
@@ -138,28 +130,19 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points }) =>
     setInputText(SAMPLE_DATA);
   };
 
-  if (!isOpen) {
-    return (
-      <button 
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 left-6 z-[1000] bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-full shadow-lg flex items-center gap-2 transition-all"
-      >
-        <Table className="w-6 h-6" />
-        <span className="font-medium">นำเข้าข้อมูลลูกค้า ({points.length})</span>
-      </button>
-    );
-  }
+  // ไม่แสดงปุ่ม Trigger แล้ว แสดงเฉพาะ Modal เมื่อ isOpen = true
+  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[1000] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[2000] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh]">
         <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
           <div>
             <h2 className="text-xl font-bold text-gray-800">นำเข้าข้อมูลลูกค้า</h2>
             <p className="text-sm text-gray-500 mt-1">Copy ชื่อและลิงก์แผนที่จาก Sheet มาวางได้เลย</p>
           </div>
           <button 
-            onClick={() => setIsOpen(false)} 
+            onClick={onClose} 
             className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-full transition-all"
             title="ปิดหน้าต่าง"
           >
