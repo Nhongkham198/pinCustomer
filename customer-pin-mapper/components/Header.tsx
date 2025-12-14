@@ -1,14 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Store, Edit, X, Save, Trash2, Image as ImageIcon, Lock, ArrowRight, Loader2 } from 'lucide-react';
 
+// ==================================================================================
+// 🔴 การตั้งค่า: ใส่ลิงก์รูป Logo ของร้านที่นี่ เพื่อให้แสดงผลเหมือนกันทุกเครื่อง 🔴
+// วิธีใช้: นำลิงก์รูปภาพ (URL) มาวางในเครื่องหมายคำพูดด้านล่าง
+// ==================================================================================
+const GLOBAL_LOGO_URL = ""; // <--- วางลิงก์รูปภาพที่นี่ เช่น "https://example.com/logo.png"
+
 export const Header: React.FC = () => {
-  // ใช้ Lazy Initialization เพื่อโหลดค่าจาก LocalStorage ตั้งแต่เริ่มต้น
+  // ใช้ Lazy Initialization เพื่อโหลดค่าจาก LocalStorage หรือใช้ค่าถาวรจาก GLOBAL_LOGO_URL
   const [logo, setLogo] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('seoulgood_logo');
+      // 1. ลองดึงจาก LocalStorage (การตั้งค่าส่วนตัวของเครื่องนั้นๆ)
+      const local = localStorage.getItem('seoulgood_logo');
+      if (local) return local;
+
+      // 2. ถ้าไม่มี ให้ใช้ค่าถาวรที่ตั้งไว้ในโค้ด (เพื่อให้ทุกคนเห็นเหมือนกัน)
+      if (GLOBAL_LOGO_URL) return GLOBAL_LOGO_URL;
+
+      return null;
     } catch (e) {
       console.error("Error loading logo from storage", e);
-      return null;
+      return GLOBAL_LOGO_URL || null;
     }
   });
   
@@ -33,12 +46,14 @@ export const Header: React.FC = () => {
     
     if (passwordInput === '198') {
       setIsPasswordModalOpen(false); // ปิดหน้าต่างรหัสผ่าน
-      // โหลดค่า Logo ปัจจุบันมารอไว้ใน Input เสมอ
+      
+      // โหลดค่า Logo ปัจจุบันมารอไว้ใน Input
+      // ถ้าเป็นค่า Default จาก Code (GLOBAL_LOGO_URL) ก็ให้แสดงใน Input ด้วยเพื่อให้แก้ได้ง่าย
       const currentLogo = localStorage.getItem('seoulgood_logo') || logo || '';
-      // ถ้าเป็น Base64 (ยาวๆ) ไม่ต้องแสดงใน input ให้รก, หรือแสดงก็ได้ แต่ user มักจะก๊อป URL ใหม่ทับอยู่แล้ว
-      // เช็คว่าเป็น URL ปกติไหม ถ้าใช่ก็แสดง ถ้าเป็น data:image... อาจจะแสดงว่า "ข้อมูลรูปภาพที่บันทึกไว้" หรือแสดงค่าเดิมก็ได้
+      
+      // ถ้าเป็น Base64 (ยาวๆ) ไม่ต้องแสดงใน input ให้รก
       if (currentLogo.startsWith('data:')) {
-         setUrlInput(''); // เคลียร์ให้ว่างเพื่อให้แปะลิงก์ใหม่ได้ง่าย หรือจะใส่ค่าเดิมก็ได้
+         setUrlInput(''); 
       } else {
          setUrlInput(currentLogo);
       }
@@ -49,7 +64,7 @@ export const Header: React.FC = () => {
     }
   };
 
-  // ฟังก์ชันช่วยบันทึก URL ตรงๆ (กรณีโหลดภาพมาเก็บไม่ได้)
+  // ฟังก์ชันช่วยบันทึก URL ตรงๆ
   const saveUrlDirectly = (url: string) => {
     try {
       localStorage.setItem('seoulgood_logo', url);
@@ -63,12 +78,13 @@ export const Header: React.FC = () => {
     }
   };
 
-  // บันทึกรูปภาพ (พยายามดึงข้อมูลภาพมาเก็บเป็น Base64 ถ้าทำได้)
+  // บันทึกรูปภาพ
   const handleSave = async () => {
     const valueToSave = urlInput.trim();
     
     if (!valueToSave) {
-      setIsEditModalOpen(false);
+      // ถ้า User ลบข้อมูลในช่อง Input แล้วกดบันทึก ให้ถือว่าต้องการกลับไปใช้ค่า Default
+      handleDelete(); 
       return;
     }
 
@@ -81,7 +97,7 @@ export const Header: React.FC = () => {
       if (response.ok) {
         const blob = await response.blob();
         
-        // ตรวจสอบขนาดไฟล์ (LocalStorage มักรับได้ไม่เกิน 5MB, เรากันไว้สัก 3MB)
+        // ตรวจสอบขนาดไฟล์ (LocalStorage มักรับได้ไม่เกิน 5MB)
         if (blob.size < 3 * 1024 * 1024) { 
           const reader = new FileReader();
           reader.onloadend = () => {
@@ -99,29 +115,27 @@ export const Header: React.FC = () => {
           };
           reader.onerror = () => saveUrlDirectly(valueToSave);
           reader.readAsDataURL(blob);
-          return; // รอ Callback ของ reader
+          return;
         } else {
            console.log("Image too large for storage, saving URL instead");
            saveUrlDirectly(valueToSave);
         }
       } else {
-        // Fetch ไม่สำเร็จ (เช่น 404)
         saveUrlDirectly(valueToSave);
       }
     } catch (e) {
-      // เกิด Error เช่น CORS (Server ปลายทางไม่อนุญาตให้ดึงข้อมูลตรงๆ)
-      // ไม่ต้องตกใจ ให้บันทึกเป็น URL ธรรมดาแทน
       console.log("CORS or Network error, saving URL instead");
       saveUrlDirectly(valueToSave);
     }
   };
 
-  // ลบรูปภาพ
+  // ลบรูปภาพ (Reset กลับไปใช้ค่า Global ถ้ามี)
   const handleDelete = () => {
-    if (window.confirm('ยืนยันที่จะลบรูป Logo ออก?')) {
+    if (window.confirm('ยืนยันที่จะรีเซ็ต Logo?')) {
       try {
         localStorage.removeItem('seoulgood_logo');
-        setLogo(null);
+        // เมื่อลบจาก LocalStorage ให้กลับไปใช้ค่า Global (ถ้ามี)
+        setLogo(GLOBAL_LOGO_URL || null);
         setIsEditModalOpen(false);
       } catch (e) {
         console.error("Delete failed", e);
@@ -145,6 +159,7 @@ export const Header: React.FC = () => {
                 alt="Store Logo" 
                 className="w-full h-full object-cover" 
                 onError={(e) => {
+                   // ถ้าโหลดรูปไม่ขึ้น ให้ซ่อนไปเลย
                    e.currentTarget.style.display = 'none';
                 }}
               />
@@ -247,7 +262,7 @@ export const Header: React.FC = () => {
                   className="flex-1 py-2.5 bg-white border border-red-200 text-red-600 rounded-xl font-bold hover:bg-red-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <Trash2 className="w-4 h-4" />
-                  ลบรูป
+                  รีเซ็ตเป็นค่าเริ่มต้น
                 </button>
                 <button 
                   onClick={handleSave}
@@ -255,9 +270,14 @@ export const Header: React.FC = () => {
                   className="flex-[2] py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {isSaving ? 'กำลังบันทึก...' : 'บันทึก'}
+                  {isSaving ? 'กำลังบันทึก...' : 'บันทึก (เฉพาะเครื่องนี้)'}
                 </button>
               </div>
+              
+              <p className="mt-4 text-xs text-gray-400 text-center">
+                * การบันทึกผ่านปุ่มนี้จะมีผลเฉพาะเครื่องนี้เท่านั้น <br/> 
+                หากต้องการเปลี่ยนถาวรให้แก้ที่ <code>GLOBAL_LOGO_URL</code> ในโค้ด
+              </p>
             </div>
           </div>
         </div>
