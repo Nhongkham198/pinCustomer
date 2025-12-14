@@ -1,0 +1,7 @@
+{
+  "name": "Customer Pin Mapper",
+  "description": "Visualizes customer locations from Google Sheets/CSV and uses Gemini to analyze delivery zones.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
