@@ -158,7 +158,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   useImperativeHandle(ref, () => ({
     toggleTracking: () => {
       if (isTracking) {
-        // Stop
+        // Stop logic
         if (watchIdRef.current !== null) {
           navigator.geolocation.clearWatch(watchIdRef.current);
           watchIdRef.current = null;
@@ -172,16 +172,18 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         if (onTrackingChange) onTrackingChange(false);
         onShowToast("หยุดการติดตามตำแหน่งแล้ว", "info");
       } else {
-        // Start
+        // Start logic
         if (!('geolocation' in navigator)) {
-          onShowToast('Browser ของคุณไม่รองรับ GPS', "error");
+          onShowToast('อุปกรณ์ของคุณไม่รองรับ GPS', "error");
           return;
         }
+
+        // แจ้งเตือนทันทีว่ากำลังค้นหา (เพื่อให้ผู้ใช้รู้ว่ากดติดแล้ว)
+        onShowToast("กำลังค้นหาสัญญาณดาวเทียม... 🛰️", "info");
 
         requestWakeLock();
         setIsTracking(true);
         if (onTrackingChange) onTrackingChange(true);
-        onShowToast("เริ่มติดตามตำแหน่งรถ... 🚗", "success");
 
         const L = window.L;
         const userIcon = L.divIcon({
@@ -196,28 +198,46 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
         watchIdRef.current = navigator.geolocation.watchPosition(
           (position) => {
-            const { latitude, longitude } = position.coords;
+            const { latitude, longitude, accuracy } = position.coords;
             if (!mapInstanceRef.current) return;
 
             if (!userMarkerRef.current) {
+              // First fix success
+              onShowToast(`จับสัญญาณ GPS ได้แล้ว (ความแม่นยำ ${Math.round(accuracy)} ม.)`, "success");
+
               userMarkerRef.current = L.marker([latitude, longitude], { icon: userIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current)
                 .bindPopup("🚗 รถส่งของ (คุณอยู่ที่นี่)", { autoPan: false });
                mapInstanceRef.current.setView([latitude, longitude], 17, { animate: true });
             } else {
               userMarkerRef.current.setLatLng([latitude, longitude]);
-              mapInstanceRef.current.panTo([latitude, longitude], { animate: true });
+              // Pan smoothly
+              mapInstanceRef.current.panTo([latitude, longitude], { animate: true, duration: 0.5 });
             }
           },
           (error) => {
             console.warn("GPS Signal lost/error:", error);
-            if (error.code === error.PERMISSION_DENIED) {
-               onShowToast("กรุณาเปิด GPS และอนุญาตให้แอปเข้าถึงตำแหน่ง", "error");
+            
+            let msg = "ระบบ GPS ขัดข้อง";
+            let type: 'error' | 'info' = 'error';
+
+            if (error.code === 1) { // PERMISSION_DENIED
+               msg = "❌ ถูกปิดกั้นการเข้าถึงตำแหน่ง\n(กรุณาไปที่ ตั้งค่า -> แอป -> อนุญาต Location)";
+               
+               // Critical error: must stop tracking
+               if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
+               watchIdRef.current = null;
                setIsTracking(false);
                if (onTrackingChange) onTrackingChange(false);
                releaseWakeLock();
+            } else if (error.code === 2) { // POSITION_UNAVAILABLE
+               msg = "⚠️ หาสัญญาณ GPS ไม่เจอ\n(ลองออกไปที่โล่ง หรือเปิด Google Maps เช็ค)";
+            } else if (error.code === 3) { // TIMEOUT
+               msg = "⚠️ ค้นหาสัญญาณนานเกินไป (สัญญาณอ่อน)";
             }
+            
+            onShowToast(msg, type);
           },
-          { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 } // เพิ่มเวลา Timeout เป็น 30 วิ
         );
       }
     },
