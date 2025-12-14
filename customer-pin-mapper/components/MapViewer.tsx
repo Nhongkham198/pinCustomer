@@ -4,7 +4,7 @@ import { CustomerPoint, MapViewerHandle } from '../types';
 interface MapViewerProps {
   points: CustomerPoint[];
   onDeletePoint: (id: string) => void;
-  onFinishJob: (point: CustomerPoint) => void; // New prop
+  onFinishJob: (point: CustomerPoint) => void;
   onTrackingChange?: (isTracking: boolean) => void;
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
@@ -17,7 +17,7 @@ declare global {
 
 // พิกัดร้านของคุณ
 const SHOP_LOCATION = { lat: 16.43624, lng: 103.5020 };
-// Logo สำรอง (กรณีไม่ได้ตั้งค่าในเครื่อง)
+// Logo สำรอง
 const DEFAULT_LOGO = "https://i.postimg.cc/QMdZ76mG/Logo_Branch1.webp";
 
 export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, onDeletePoint, onFinishJob, onTrackingChange, onShowToast }, ref) => {
@@ -29,18 +29,18 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   // State สำหรับ Tracking
   const [isTracking, setIsTracking] = useState(false);
   const userMarkerRef = useRef<any>(null);
+  const accuracyCircleRef = useRef<any>(null); // วงกลมแสดงความแม่นยำ
   const watchIdRef = useRef<number | null>(null);
+  const fallbackTimeoutRef = useRef<any>(null); // Manual timeout สำหรับ iOS
   const wakeLockRef = useRef<any>(null);
 
-  // ฟังก์ชันขอ Wake Lock
+  // ฟังก์ชันขอ Wake Lock (ป้องกันหน้าจอดับ)
   const requestWakeLock = async () => {
     if ('wakeLock' in navigator) {
       try {
         wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
       } catch (err: any) {
-        if (err.name !== 'NotAllowedError') {
-          console.error(`${err} - Wake Lock failed`);
-        }
+        // Android บางรุ่นอาจไม่รองรับ หรือ User ไม่ให้สิทธิ์ ก็ปล่อยผ่าน
       }
     }
   };
@@ -51,7 +51,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
       } catch (err) {
-        console.error('Failed to release Wake Lock', err);
+        console.log('Failed to release Wake Lock', err);
       }
     }
   };
@@ -63,7 +63,6 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
       return response;
     } catch (error) {
       if (retries > 0) {
-        console.log(`Retrying route fetch... (${retries} attempts left)`);
         await new Promise(resolve => setTimeout(resolve, delay));
         return fetchWithRetry(url, retries - 1, delay);
       } else {
@@ -72,7 +71,52 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     }
   };
 
-  // ฟังก์ชันดึงเส้นทาง (อัปเดตเพื่อแก้ปัญหาบน PC)
+  // Helper: สร้าง/อัปเดตหมุดตำแหน่งผู้ใช้
+  const updateUserMarker = (lat: number, lng: number, accuracy: number) => {
+    if (!mapInstanceRef.current || !window.L) return;
+    const L = window.L;
+
+    // 1. สร้าง Icon (ถ้ายังไม่มี)
+    if (!userMarkerRef.current) {
+       const userIcon = L.divIcon({
+          className: 'user-location-icon',
+          html: `<div style="background-color:#2563eb;width:44px;height:44px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 4px rgba(37,99,235,0.2),0 8px 15px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>
+          </div>`,
+          iconSize: [44, 44],
+          iconAnchor: [22, 22],
+          popupAnchor: [0, -22]
+        });
+
+        // สร้าง Marker
+        userMarkerRef.current = L.marker([lat, lng], { icon: userIcon, zIndexOffset: 9999 })
+          .addTo(mapInstanceRef.current)
+          .bindPopup(`🚗 รถส่งของ (ความแม่นยำ ${Math.round(accuracy)} ม.)`, { autoPan: false });
+
+        // สร้าง Circle (วงแสดงรัศมี Accuracy)
+        accuracyCircleRef.current = L.circle([lat, lng], { radius: accuracy, color: '#2563eb', fillOpacity: 0.1, weight: 1 })
+          .addTo(mapInstanceRef.current);
+
+        // Pan ไปหาทันทีในครั้งแรก
+        mapInstanceRef.current.setView([lat, lng], 17, { animate: true });
+        onShowToast(`พบตำแหน่งแล้ว! (แม่นยำ ${Math.round(accuracy)} ม.)`, "success");
+
+    } else {
+        // อัปเดตตำแหน่งเดิม
+        const newLatLng = new L.LatLng(lat, lng);
+        userMarkerRef.current.setLatLng(newLatLng);
+        userMarkerRef.current.setPopupContent(`🚗 รถส่งของ (ความแม่นยำ ${Math.round(accuracy)} ม.)`);
+        
+        if (accuracyCircleRef.current) {
+            accuracyCircleRef.current.setLatLng(newLatLng);
+            accuracyCircleRef.current.setRadius(accuracy);
+        }
+
+        // Pan ตามนุ่มๆ
+        mapInstanceRef.current.panTo(newLatLng, { animate: true, duration: 0.5 });
+    }
+  };
+
   const drawRoute = async (destLat: number, destLng: number) => {
     if (!mapInstanceRef.current) return;
     const L = window.L;
@@ -81,19 +125,17 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     onShowToast("กำลังคำนวณเส้นทาง...", "info");
 
     try {
-      // 1. หาจุดเริ่มต้น
       let startLat = SHOP_LOCATION.lat;
       let startLng = SHOP_LOCATION.lng;
       let usingShopLocation = true;
 
+      // Logic การหาจุดเริ่ม: เอาจาก Marker ล่าสุดก่อน -> ถ้าไม่มีลองขอ GPS สด -> ถ้าไม่ได้ใช้ร้าน
       if (userMarkerRef.current) {
-        // กรณีมี GPS (บนมือถือที่ Tracking อยู่)
         const latlng = userMarkerRef.current.getLatLng();
         startLat = latlng.lat;
         startLng = latlng.lng;
         usingShopLocation = false;
       } else if ('geolocation' in navigator && isTracking) {
-        // กรณีเปิด Tracking แต่ Marker ยังไม่ขึ้น (รอ GPS)
         try {
            const position: any = await new Promise((resolve, reject) => {
               navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000, enableHighAccuracy: false });
@@ -102,16 +144,14 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
            startLng = position.coords.longitude;
            usingShopLocation = false;
         } catch (e) {
-           console.log("GPS timeout, using shop");
+           console.log("GPS route timeout, using shop");
         }
       } 
-      // กรณี PC หรือไม่ได้ Tracking จะใช้ Shop Location ทันทีโดยไม่ต้องรอ Timeout
 
       if (usingShopLocation) {
          onShowToast("ใช้ตำแหน่งร้านเป็นจุดเริ่มต้น (ไม่พบ GPS)", "info");
       }
 
-      // 2. เรียก API OSRM
       const response = await fetchWithRetry(
         `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson`
       );
@@ -149,96 +189,156 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
       }
     } catch (error) {
       console.error("Error fetching route:", error);
-      onShowToast("⚠️ เน็ตไม่เสถียร ไม่สามารถวาดเส้นทางได้\nกรุณาใช้ปุ่ม 'เปิด Google Maps' ด้านล่างแทน", "error");
+      onShowToast("⚠️ เน็ตไม่เสถียร ไม่สามารถวาดเส้นทางได้", "error");
     } finally {
       document.body.style.cursor = 'default';
     }
   };
 
+  const startWatchingPosition = (enableHighAccuracy: boolean) => {
+    if (!('geolocation' in navigator) || !mapInstanceRef.current) return;
+    
+    // Clear old watcher
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    // Clear old timeout
+    if (fallbackTimeoutRef.current) {
+      clearTimeout(fallbackTimeoutRef.current);
+      fallbackTimeoutRef.current = null;
+    }
+
+    const message = enableHighAccuracy 
+      ? "กำลังค้นหา GPS (ดาวเทียม)..." 
+      : "กำลังค้นหาตำแหน่ง (เสาสัญญาณ)...";
+    onShowToast(message, "info");
+
+    // 🛠️ iOS FIX: Manual Fallback Timeout
+    // iOS มักจะไม่ throw error เมื่อหา GPS ไม่เจอในโหมด High Accuracy แต่จะเงียบไปเลย
+    // เราจึงต้องจับเวลาเอง ถ้าผ่านไป 6 วินาทียังไม่ได้ตำแหน่ง ให้สลับไปโหมด Low Accuracy
+    if (enableHighAccuracy) {
+      fallbackTimeoutRef.current = setTimeout(() => {
+        if (!userMarkerRef.current) {
+          console.log("iOS Safety Net: High Accuracy timed out, switching to Low Accuracy");
+          onShowToast("GPS ตอบสนองช้า สลับไปใช้สัญญาณมือถือแทน", "info");
+          startWatchingPosition(false);
+        }
+      }, 6000); 
+    }
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        // ถ้าได้ตำแหน่งแล้ว ให้ยกเลิก Timeout ทันที
+        if (fallbackTimeoutRef.current) {
+          clearTimeout(fallbackTimeoutRef.current);
+          fallbackTimeoutRef.current = null;
+        }
+
+        const { latitude, longitude, accuracy } = position.coords;
+        updateUserMarker(latitude, longitude, accuracy);
+      },
+      (error) => {
+        console.warn("GPS Error:", error.code);
+        
+        // ยกเลิก Timeout เพราะ Error แล้ว
+        if (fallbackTimeoutRef.current) {
+          clearTimeout(fallbackTimeoutRef.current);
+          fallbackTimeoutRef.current = null;
+        }
+
+        // Smart Fallback
+        if (enableHighAccuracy) {
+           console.log("High accuracy failed, switching to low accuracy...");
+           startWatchingPosition(false); 
+           return;
+        }
+
+        let msg = "ระบบ GPS ขัดข้อง";
+        if (error.code === 1) {
+           // iOS message specific
+           msg = "❌ กรุณาเปิดสิทธิ์ระบุตำแหน่ง (Settings > Privacy > Location Services)";
+           stopTrackingInternal();
+        } else if (error.code === 2) {
+           msg = "⚠️ ไม่พบสัญญาณ GPS";
+        } else if (error.code === 3) {
+           msg = "⚠️ สัญญาณ GPS อ่อนมาก";
+        }
+        
+        if (error.code === 1) onShowToast(msg, "error");
+      },
+      { 
+        enableHighAccuracy: enableHighAccuracy, 
+        maximumAge: 0, // 🛠️ iOS Fix: Force fresh reading (ป้องกัน Cached เก่าค้าง)
+        timeout: 10000 
+      } 
+    );
+  };
+
+  const stopTrackingInternal = () => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    if (fallbackTimeoutRef.current) {
+      clearTimeout(fallbackTimeoutRef.current);
+      fallbackTimeoutRef.current = null;
+    }
+    if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
+    }
+    if (accuracyCircleRef.current) {
+      accuracyCircleRef.current.remove();
+      accuracyCircleRef.current = null;
+    }
+    releaseWakeLock();
+    setIsTracking(false);
+    if (onTrackingChange) onTrackingChange(false);
+  };
+
   useImperativeHandle(ref, () => ({
     toggleTracking: () => {
       if (isTracking) {
-        // Stop logic
-        if (watchIdRef.current !== null) {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-          watchIdRef.current = null;
-        }
-        if (userMarkerRef.current) {
-          userMarkerRef.current.remove();
-          userMarkerRef.current = null;
-        }
-        releaseWakeLock();
-        setIsTracking(false);
-        if (onTrackingChange) onTrackingChange(false);
+        stopTrackingInternal();
         onShowToast("หยุดการติดตามตำแหน่งแล้ว", "info");
       } else {
-        // Start logic
+        // 1. ตรวจสอบ HTTPS
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        if (window.location.protocol !== 'https:' && !isLocal) {
+          alert('⚠️ iOS บังคับใช้ HTTPS สำหรับ GPS\nกรุณาเข้าเว็บผ่าน https:// เท่านั้น');
+          onShowToast('ระบบต้องการ HTTPS', "error");
+          return;
+        }
+
         if (!('geolocation' in navigator)) {
           onShowToast('อุปกรณ์ของคุณไม่รองรับ GPS', "error");
           return;
         }
 
-        // แจ้งเตือนทันทีว่ากำลังค้นหา (เพื่อให้ผู้ใช้รู้ว่ากดติดแล้ว)
-        onShowToast("กำลังค้นหาสัญญาณดาวเทียม... 🛰️", "info");
-
-        requestWakeLock();
         setIsTracking(true);
         if (onTrackingChange) onTrackingChange(true);
+        requestWakeLock();
 
-        const L = window.L;
-        const userIcon = L.divIcon({
-          className: 'user-location-icon',
-          html: `<div style="background-color:#2563eb;width:44px;height:44px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 4px rgba(37,99,235,0.2),0 8px 15px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;">
-             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>
-          </div>`,
-          iconSize: [44, 44],
-          iconAnchor: [22, 22],
-          popupAnchor: [0, -22]
-        });
-
-        watchIdRef.current = navigator.geolocation.watchPosition(
-          (position) => {
-            const { latitude, longitude, accuracy } = position.coords;
-            if (!mapInstanceRef.current) return;
-
-            if (!userMarkerRef.current) {
-              // First fix success
-              onShowToast(`จับสัญญาณ GPS ได้แล้ว (ความแม่นยำ ${Math.round(accuracy)} ม.)`, "success");
-
-              userMarkerRef.current = L.marker([latitude, longitude], { icon: userIcon, zIndexOffset: 1000 }).addTo(mapInstanceRef.current)
-                .bindPopup("🚗 รถส่งของ (คุณอยู่ที่นี่)", { autoPan: false });
-               mapInstanceRef.current.setView([latitude, longitude], 17, { animate: true });
-            } else {
-              userMarkerRef.current.setLatLng([latitude, longitude]);
-              // Pan smoothly
-              mapInstanceRef.current.panTo([latitude, longitude], { animate: true, duration: 0.5 });
+        // 🚀 KICKSTART STRATEGY 🚀
+        // ลองดึงค่าล่าสุดแบบเร็วๆ มาก่อน (Low Accuracy) เผื่อมี Cache
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                // ถ้ายังไม่มี Marker จาก Watcher ให้แสดงอันนี้ไปก่อน
+                if (!userMarkerRef.current) {
+                  updateUserMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+                }
+            },
+            (err) => { /* Ignore errors from kickstart */ },
+            { 
+                enableHighAccuracy: false, 
+                timeout: 3000, 
+                maximumAge: Infinity 
             }
-          },
-          (error) => {
-            console.warn("GPS Signal lost/error:", error);
-            
-            let msg = "ระบบ GPS ขัดข้อง";
-            let type: 'error' | 'info' = 'error';
-
-            if (error.code === 1) { // PERMISSION_DENIED
-               msg = "❌ ถูกปิดกั้นการเข้าถึงตำแหน่ง\n(กรุณาไปที่ ตั้งค่า -> แอป -> อนุญาต Location)";
-               
-               // Critical error: must stop tracking
-               if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-               watchIdRef.current = null;
-               setIsTracking(false);
-               if (onTrackingChange) onTrackingChange(false);
-               releaseWakeLock();
-            } else if (error.code === 2) { // POSITION_UNAVAILABLE
-               msg = "⚠️ หาสัญญาณ GPS ไม่เจอ\n(ลองออกไปที่โล่ง หรือเปิด Google Maps เช็ค)";
-            } else if (error.code === 3) { // TIMEOUT
-               msg = "⚠️ ค้นหาสัญญาณนานเกินไป (สัญญาณอ่อน)";
-            }
-            
-            onShowToast(msg, type);
-          },
-          { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 } // เพิ่มเวลา Timeout เป็น 30 วิ
         );
+
+        // เริ่มต้นด้วย High Accuracy (แต่มี Timeout Safety Net ดักไว้แล้วข้างใน)
+        startWatchingPosition(true);
       }
     },
     resetToShop: () => {
@@ -259,10 +359,9 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-      releaseWakeLock();
+      stopTrackingInternal();
     };
-  }, [isTracking]);
+  }, []); 
 
   // Main Map Logic
   useEffect(() => {
@@ -313,7 +412,6 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
                นำทาง (ในแอปนี้)
             </button>
             
-            <!-- ปุ่ม Finish Job -->
             <button class="btn-finish-job block w-full bg-emerald-500 hover:bg-emerald-600 text-white text-lg font-bold py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 mb-1">
                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                ✅ ส่งสำเร็จ (ถ่ายรูป)
@@ -338,7 +436,6 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
           });
         }
 
-        // New Finish Button Listener
         const finishBtn = popupContent.querySelector('.btn-finish-job');
         if (finishBtn) {
           finishBtn.addEventListener('click', () => {
