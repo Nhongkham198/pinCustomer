@@ -124,36 +124,41 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     document.body.style.cursor = 'wait';
     onShowToast("กำลังคำนวณเส้นทาง...", "info");
 
-    try {
-      let startLat = SHOP_LOCATION.lat;
-      let startLng = SHOP_LOCATION.lng;
-      let usingShopLocation = true;
+    // 1. เตรียมพิกัดเริ่มต้น (อยู่นอก Try/Catch เพื่อให้ Fallback ใช้งานได้)
+    let startLat = SHOP_LOCATION.lat;
+    let startLng = SHOP_LOCATION.lng;
+    let usingShopLocation = true;
 
-      // Logic การหาจุดเริ่ม: เอาจาก Marker ล่าสุดก่อน -> ถ้าไม่มีลองขอ GPS สด -> ถ้าไม่ได้ใช้ร้าน
-      if (userMarkerRef.current) {
-        const latlng = userMarkerRef.current.getLatLng();
-        startLat = latlng.lat;
-        startLng = latlng.lng;
-        usingShopLocation = false;
-      } else if ('geolocation' in navigator && isTracking) {
-        try {
-           const position: any = await new Promise((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000, enableHighAccuracy: false });
-           });
-           startLat = position.coords.latitude;
-           startLng = position.coords.longitude;
-           usingShopLocation = false;
-        } catch (e) {
-           console.log("GPS route timeout, using shop");
-        }
-      } 
-
-      if (usingShopLocation) {
-         onShowToast("ใช้ตำแหน่งร้านเป็นจุดเริ่มต้น (ไม่พบ GPS)", "info");
+    // พยายามหาจุดเริ่มต้นที่ดีที่สุด: Marker ล่าสุด -> GPS ปัจจุบัน -> ร้าน
+    if (userMarkerRef.current) {
+      const latlng = userMarkerRef.current.getLatLng();
+      startLat = latlng.lat;
+      startLng = latlng.lng;
+      usingShopLocation = false;
+    } else if ('geolocation' in navigator && isTracking) {
+      try {
+         // ลองขอ GPS ล่าสุดแบบเร็วๆ (Timeout 2 วินาที)
+         const position: any = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 2000, enableHighAccuracy: false });
+         });
+         startLat = position.coords.latitude;
+         startLng = position.coords.longitude;
+         usingShopLocation = false;
+      } catch (e) {
+         console.log("Quick GPS for route failed, using shop/last known");
       }
+    } 
 
+    if (usingShopLocation) {
+       onShowToast("ไม่พบพิกัดปัจจุบัน ใช้ตำแหน่งร้านเป็นจุดเริ่ม", "info");
+    }
+
+    try {
+      // 2. พยายามขอเส้นทางจาก OSRM (Server ฟรี)
       const response = await fetchWithRetry(
-        `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson`
+        `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson`,
+        1, // Retry แค่ 1 ครั้งพอ ถ้าไม่ได้ให้ไป Fallback เลย จะได้ไม่รอนาน
+        1000
       );
 
       const data = await response.json();
@@ -165,6 +170,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
           mapInstanceRef.current.removeLayer(routeLayerRef.current);
         }
 
+        // วาดเส้นทางจริง (สีฟ้า)
         routeLayerRef.current = L.geoJSON(routeGeoJSON, {
           style: {
             color: '#3b82f6',
@@ -185,11 +191,28 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [50, 50] });
         
       } else {
-        throw new Error("No route found");
+        throw new Error("No route found from API");
       }
     } catch (error) {
-      console.error("Error fetching route:", error);
-      onShowToast("⚠️ เน็ตไม่เสถียร ไม่สามารถวาดเส้นทางได้", "error");
+      console.warn("Routing API Failed, switching to fallback line:", error);
+      
+      // 3. Fallback Mode: วาดเส้นตรงสีส้ม (Dashed Line) ถ้า Server ล่ม
+      if (routeLayerRef.current) {
+        mapInstanceRef.current.removeLayer(routeLayerRef.current);
+      }
+      
+      onShowToast("⚠️ ระบบนำทางขัดข้องชั่วคราว แสดงเส้นทางตรงแทน", "info");
+
+      routeLayerRef.current = L.polyline([[startLat, startLng], [destLat, destLng]], {
+         color: '#f97316', // สีส้ม
+         weight: 5,
+         opacity: 0.8,
+         dashArray: '10, 10', // เส้นประ
+         lineCap: 'round'
+      }).addTo(mapInstanceRef.current);
+
+      mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [50, 50] });
+
     } finally {
       document.body.style.cursor = 'default';
     }
@@ -215,8 +238,6 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     onShowToast(message, "info");
 
     // 🛠️ iOS FIX: Manual Fallback Timeout
-    // iOS มักจะไม่ throw error เมื่อหา GPS ไม่เจอในโหมด High Accuracy แต่จะเงียบไปเลย
-    // เราจึงต้องจับเวลาเอง ถ้าผ่านไป 6 วินาทียังไม่ได้ตำแหน่ง ให้สลับไปโหมด Low Accuracy
     if (enableHighAccuracy) {
       fallbackTimeoutRef.current = setTimeout(() => {
         if (!userMarkerRef.current) {
@@ -256,7 +277,6 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
         let msg = "ระบบ GPS ขัดข้อง";
         if (error.code === 1) {
-           // iOS message specific
            msg = "❌ กรุณาเปิดสิทธิ์ระบุตำแหน่ง (Settings > Privacy > Location Services)";
            stopTrackingInternal();
         } else if (error.code === 2) {
@@ -269,7 +289,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
       },
       { 
         enableHighAccuracy: enableHighAccuracy, 
-        maximumAge: 0, // 🛠️ iOS Fix: Force fresh reading (ป้องกัน Cached เก่าค้าง)
+        maximumAge: 0, 
         timeout: 10000 
       } 
     );
@@ -321,10 +341,8 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         requestWakeLock();
 
         // 🚀 KICKSTART STRATEGY 🚀
-        // ลองดึงค่าล่าสุดแบบเร็วๆ มาก่อน (Low Accuracy) เผื่อมี Cache
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                // ถ้ายังไม่มี Marker จาก Watcher ให้แสดงอันนี้ไปก่อน
                 if (!userMarkerRef.current) {
                   updateUserMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
                 }
@@ -337,7 +355,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
             }
         );
 
-        // เริ่มต้นด้วย High Accuracy (แต่มี Timeout Safety Net ดักไว้แล้วข้างใน)
+        // เริ่มต้นด้วย High Accuracy
         startWatchingPosition(true);
       }
     },
