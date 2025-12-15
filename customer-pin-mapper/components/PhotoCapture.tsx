@@ -13,6 +13,10 @@ export const PhotoCapture: React.FC<PhotoCaptureProps> = ({ point, onConfirm, on
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Logic เพื่อเพิ่มความสุภาพ (เติม "คุณ" ถ้ายังไม่มี และไม่ใช่ร้านค้า)
+  const noPrefixNeeded = /^(ร้าน|บริษัท|หจก|โรงเรียน|วัด|ธนาคาร|คุณ|Mr\.|Ms\.|Mrs\.)/.test(point.name);
+  const displayName = noPrefixNeeded ? point.name : `คุณ${point.name}`;
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -57,7 +61,7 @@ export const PhotoCapture: React.FC<PhotoCaptureProps> = ({ point, onConfirm, on
         
         <div className="p-4 bg-slate-100 border-b flex justify-between items-center">
           <div>
-            <h3 className="font-bold text-lg text-slate-800">ส่งงาน: {point.name}</h3>
+            <h3 className="font-bold text-lg text-slate-800">ส่งงาน: {displayName}</h3>
             <p className="text-xs text-slate-500">ถ่ายรูปสินค้าหรือหน้าร้านเพื่อยืนยัน</p>
           </div>
           <button onClick={onCancel} className="p-2 bg-white rounded-full text-slate-500 hover:text-red-500 transition-colors">

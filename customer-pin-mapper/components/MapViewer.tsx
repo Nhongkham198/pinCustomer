@@ -25,6 +25,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   const mapInstanceRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const routeLayerRef = useRef<any>(null); 
+  const directionLinesRef = useRef<any[]>([]); // เก็บเส้นนำสายตา (เส้นสีส้ม)
   
   // State สำหรับ Tracking
   const [isTracking, setIsTracking] = useState(false);
@@ -33,6 +34,9 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   const watchIdRef = useRef<number | null>(null);
   const fallbackTimeoutRef = useRef<any>(null); // Manual timeout สำหรับ iOS
   const wakeLockRef = useRef<any>(null);
+  
+  // Ref สำหรับควบคุมการ Pan อัตโนมัติ (จะหยุดเมื่อ User เลื่อนแผนที่เอง)
+  const shouldAutoPanRef = useRef(false);
 
   // ฟังก์ชันขอ Wake Lock (ป้องกันหน้าจอดับ)
   const requestWakeLock = async () => {
@@ -87,10 +91,48 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     return R * c;
   };
 
+  // ฟังก์ชันวาดเส้น Radar หาลูกค้าที่ใกล้ที่สุด 5 คน
+  const updateNearestLines = (userLat: number, userLng: number) => {
+    if (!mapInstanceRef.current || !window.L) return;
+    const L = window.L;
+
+    // 1. ลบเส้นเก่าออกก่อน
+    directionLinesRef.current.forEach(line => line.remove());
+    directionLinesRef.current = [];
+
+    if (points.length === 0) return;
+
+    // 2. คำนวณระยะทางหาลูกค้าทุกเจ้า
+    const candidates = points.map(p => ({
+        ...p,
+        distance: getDistanceMeters(userLat, userLng, p.lat, p.lng)
+    }));
+
+    // 3. เรียงลำดับจากใกล้ไปไกล และตัดมาแค่ 5 อันดับแรก
+    const nearestPoints = candidates.sort((a, b) => a.distance - b.distance).slice(0, 5);
+
+    // 4. วาดเส้น
+    nearestPoints.forEach(p => {
+        // วาดเส้นประสีส้มบางๆ
+        const line = L.polyline([[userLat, userLng], [p.lat, p.lng]], {
+            color: '#f97316', // สีส้ม (Orange-500)
+            weight: 2,        // เส้นบาง
+            dashArray: '5, 10', // เส้นประ
+            opacity: 0.6,     // จางๆ หน่อยจะได้ไม่กวนตา
+            interactive: false // ไม่ต้องคลิกได้
+        }).addTo(mapInstanceRef.current);
+        
+        directionLinesRef.current.push(line);
+    });
+  };
+
   // Helper: สร้าง/อัปเดตหมุดตำแหน่งผู้ใช้
   const updateUserMarker = (lat: number, lng: number, accuracy: number) => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L;
+
+    // อัปเดตเส้น Radar หาลูกค้าใกล้เคียง
+    updateNearestLines(lat, lng);
 
     // 1. สร้าง Icon (ถ้ายังไม่มี)
     if (!userMarkerRef.current) {
@@ -113,7 +155,8 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         accuracyCircleRef.current = L.circle([lat, lng], { radius: accuracy, color: '#2563eb', fillOpacity: 0.1, weight: 1 })
           .addTo(mapInstanceRef.current);
 
-        // Pan ไปหาทันทีในครั้งแรก
+        // เปิด Auto Pan ทันทีเมื่อเจอครั้งแรก
+        shouldAutoPanRef.current = true;
         mapInstanceRef.current.setView([lat, lng], 17, { animate: true });
         onShowToast(`พบตำแหน่งแล้ว! (แม่นยำ ${Math.round(accuracy)} ม.)`, "success");
 
@@ -128,8 +171,10 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
             accuracyCircleRef.current.setRadius(accuracy);
         }
 
-        // Pan ตามนุ่มๆ
-        mapInstanceRef.current.panTo(newLatLng, { animate: true, duration: 0.5 });
+        // Pan ตามเฉพาะเมื่อ shouldAutoPan ยังเป็น true
+        if (shouldAutoPanRef.current) {
+            mapInstanceRef.current.panTo(newLatLng, { animate: true, duration: 0.5 });
+        }
     }
   };
 
@@ -356,8 +401,14 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
       accuracyCircleRef.current.remove();
       accuracyCircleRef.current = null;
     }
+    
+    // ลบเส้น Radar เมื่อหยุดนำทาง
+    directionLinesRef.current.forEach(line => line.remove());
+    directionLinesRef.current = [];
+
     releaseWakeLock();
     setIsTracking(false);
+    shouldAutoPanRef.current = false; // Reset
     if (onTrackingChange) onTrackingChange(false);
   };
 
@@ -381,6 +432,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         }
 
         setIsTracking(true);
+        shouldAutoPanRef.current = true; // เปิด Auto Pan เมื่อเริ่ม
         if (onTrackingChange) onTrackingChange(true);
         requestWakeLock();
 
@@ -435,6 +487,10 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
       L.control.zoom({ position: 'topleft' }).addTo(mapInstanceRef.current);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(mapInstanceRef.current);
 
+      // 🔴 เพิ่ม Logic: ถ้า User เลื่อนหรือซูมแผนที่ ให้หยุด Auto Pan ทันที
+      mapInstanceRef.current.on('dragstart', () => { shouldAutoPanRef.current = false; });
+      mapInstanceRef.current.on('zoomstart', () => { shouldAutoPanRef.current = false; });
+
       const savedLogo = localStorage.getItem('seoulgood_logo');
       const displayLogo = savedLogo || DEFAULT_LOGO;
       const shopIcon = L.divIcon({
@@ -461,11 +517,16 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
     if (points.length > 0) {
       points.forEach(point => {
+        // Logic เพื่อเพิ่มความสุภาพ (เติม "คุณ" ถ้ายังไม่มี และไม่ใช่ร้านค้า)
+        const noPrefixNeeded = /^(ร้าน|บริษัท|หจก|โรงเรียน|วัด|ธนาคาร|คุณ|Mr\.|Ms\.|Mrs\.)/.test(point.name);
+        const displayName = noPrefixNeeded ? point.name : `คุณ${point.name}`;
+
         const popupContent = document.createElement('div');
         popupContent.className = "text-center font-sans p-3 min-w-[350px]";
         
         popupContent.innerHTML = `
-          <h3 class="font-extrabold text-2xl text-slate-900 mb-1 leading-tight tracking-tight mt-1">${point.name}</h3>
+          <p class="text-xs text-gray-400 font-bold mb-0">ชื่อลูกค้า</p>
+          <h3 class="font-extrabold text-2xl text-slate-900 mb-1 leading-tight tracking-tight">${displayName}</h3>
           <p class="text-sm text-gray-400 mb-4 font-mono">${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}</p>
           
           <div class="flex flex-col gap-2">
