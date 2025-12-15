@@ -1,51 +1,43 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { CustomerPoint } from "../types";
+import { GoogleGenAI } from "@google/genai";
+import { MenuItem } from '../types';
 
-const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("API Key not found");
+export const getFoodRecommendation = async (userQuery: string, menu: MenuItem[], apiKey?: string): Promise<string> => {
+  // Priority: 1. Key passed from App Settings (LocalStorage) 2. Key from Build Environment
+  const keyToUse = apiKey || process.env.API_KEY;
+
+  if (!keyToUse) {
+     return "กรุณาตั้งค่า API KEY ก่อนใช้งาน (ไปที่ปุ่มเฟือง -> Login -> ใส่ Gemini API Key)";
   }
-  return new GoogleGenAI({ apiKey });
-};
 
-export const analyzeDeliveryZones = async (points: CustomerPoint[]): Promise<string> => {
-  if (points.length === 0) return "ไม่มีข้อมูลสำหรับการวิเคราะห์";
-
-  const ai = getAiClient();
-  
-  // Prepare data for the prompt (Simplified: Name + Location only)
-  const dataSummary = points.map((p, index) => 
-    `Customer ${index + 1}: [${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}] - ${p.name}`
-  ).join("\n");
+  // Optimize token usage by sending a simplified menu list
+  const simplifiedMenu = menu.map(m => `${m.name} (${m.price} THB) [${m.category}] - ${m.description || ''}`).join('\n');
 
   const prompt = `
-    I have a list of customer locations for a food delivery business.
-    Data:
-    ${dataSummary}
-
-    Please analyze this data and provide a response in Thai (ภาษาไทย).
+    You are a helpful, cheerful waiter at a Thai restaurant called "ArhanDuan".
+    Here is our current menu:
+    ---
+    ${simplifiedMenu}
+    ---
     
-    1. Identify clusters or density zones (e.g., "Zone A has high density").
-    2. Suggest a center point for a kitchen or distribution hub based on these points.
-    3. Calculate roughly the spread of the delivery area.
-    4. Provide any logistical advice based purely on location distribution.
-
-    Keep the tone professional and helpful.
+    The customer asks: "${userQuery}"
+    
+    Please recommend 1-3 items from the menu that match their request. 
+    Explain why you recommend them briefly.
+    If the requested item is not on the menu, politely apologize and suggest the closest alternative.
+    Answer in Thai. Keep it short and friendly.
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+    // Create a fresh client instance with the selected key
+    const client = new GoogleGenAI({ apiKey: keyToUse });
+    
+    const response = await client.models.generateContent({
+      model: 'gemini-2.5-flash',
       contents: prompt,
-      config: {
-        thinkingConfig: { thinkingBudget: 0 }, // Disable thinking for faster response on simple analysis
-      }
     });
-
-    return response.text || "ไม่สามารถวิเคราะห์ข้อมูลได้ในขณะนี้";
+    return response.text || "ขออภัย ระบบขัดข้องชั่วคราว (AI Error)";
   } catch (error) {
-    console.error("Gemini Analysis Error:", error);
-    return "เกิดข้อผิดพลาดในการเชื่อมต่อกับ AI กรุณาลองใหม่";
+    console.error("Gemini Error:", error);
+    return "ขออภัย ไม่สามารถเชื่อมต่อกับ AI ได้ในขณะนี้ (ตรวจสอบ API Key)";
   }
 };
