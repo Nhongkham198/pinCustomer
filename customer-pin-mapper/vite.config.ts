@@ -3,17 +3,17 @@ import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
-  const env = loadEnv(mode, (process as any).cwd(), '');
-  
+  // Use '.' to refer to the current directory safely
+  const env = loadEnv(mode, '.', '');
   return {
+    base: '/',
     plugins: [react()],
+    define: {
+      'process.env.API_KEY': JSON.stringify(env.API_KEY)
+    },
     build: {
       outDir: 'dist',
-    },
-    define: {
-      // Polyfill process.env.API_KEY so the existing service code works without changes
-      'process.env.API_KEY': JSON.stringify(env.API_KEY),
-    },
+      sourcemap: false
+    }
   };
 });

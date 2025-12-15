@@ -1,7 +1,8 @@
 {
-  "name": "SeoulGood - Delivery",
-  "description": "A food delivery application using Google Sheets as a database, OpenStreetMap for location, and Gemini AI for menu recommendations.",
+  "name": "Customer Pin Mapper",
+  "description": "Visualizes customer locations from Google Sheets/CSV and uses Gemini to analyze delivery zones.",
   "requestFramePermissions": [
-    "geolocation"
+    "geolocation",
+    "camera"
   ]
 }
