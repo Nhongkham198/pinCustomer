@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { CustomerPoint, MapViewerHandle } from '../types';
+import { Navigation, Clock } from 'lucide-react';
 
 interface MapViewerProps {
   points: CustomerPoint[];
@@ -29,6 +30,10 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   
   // State สำหรับ Tracking
   const [isTracking, setIsTracking] = useState(false);
+  
+  // State สำหรับข้อมูลเส้นทาง (ระยะทาง/เวลา)
+  const [routeStats, setRouteStats] = useState<{ distance: string, duration: string } | null>(null);
+
   const userMarkerRef = useRef<any>(null);
   const accuracyCircleRef = useRef<any>(null); // วงกลมแสดงความแม่นยำ
   const watchIdRef = useRef<number | null>(null);
@@ -37,6 +42,10 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   
   // Ref สำหรับควบคุมการ Pan อัตโนมัติ (จะหยุดเมื่อ User เลื่อนแผนที่เอง)
   const shouldAutoPanRef = useRef(false);
+
+  // Ref สำหรับระบบนำทางอัตโนมัติ (Rerouting)
+  const activeDestinationRef = useRef<{lat: number, lng: number} | null>(null);
+  const lastRouteCalcPosRef = useRef<{lat: number, lng: number} | null>(null);
 
   // ฟังก์ชันขอ Wake Lock (ป้องกันหน้าจอดับ)
   const requestWakeLock = async () => {
@@ -127,23 +136,42 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   };
 
   // Helper: สร้าง/อัปเดตหมุดตำแหน่งผู้ใช้
-  const updateUserMarker = (lat: number, lng: number, accuracy: number) => {
+  const updateUserMarker = (lat: number, lng: number, accuracy: number, heading: number | null) => {
     if (!mapInstanceRef.current || !window.L) return;
     const L = window.L;
 
     // อัปเดตเส้น Radar หาลูกค้าใกล้เคียง
     updateNearestLines(lat, lng);
 
+    // --- AUTO REROUTING LOGIC ---
+    if (activeDestinationRef.current && lastRouteCalcPosRef.current) {
+        const distFromLastCalc = getDistanceMeters(
+            lat, lng, 
+            lastRouteCalcPosRef.current.lat, lastRouteCalcPosRef.current.lng
+        );
+
+        if (distFromLastCalc > 40) { 
+            console.log("User moved > 40m, recalculating route...");
+            drawRoute(activeDestinationRef.current.lat, activeDestinationRef.current.lng, true); 
+        }
+    }
+    // -----------------------------
+
     // 1. สร้าง Icon (ถ้ายังไม่มี)
     if (!userMarkerRef.current) {
+       // สร้างลูกศรสีแดง (Navigation Arrow)
        const userIcon = L.divIcon({
           className: 'user-location-icon',
-          html: `<div style="background-color:#2563eb;width:44px;height:44px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 4px rgba(37,99,235,0.2),0 8px 15px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"/><path d="M15 18H9"/><path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14"/><circle cx="17" cy="18" r="2"/><circle cx="7" cy="18" r="2"/></svg>
-          </div>`,
-          iconSize: [44, 44],
-          iconAnchor: [22, 22],
-          popupAnchor: [0, -22]
+          html: `
+            <div id="user-heading-arrow" style="transform: rotate(${heading || 0}deg); transition: transform 0.3s ease; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 3px 5px rgba(0,0,0,0.3));">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width: 100%; height: 100%; overflow: visible;">
+                    <path d="M50 0 L100 100 L50 80 L0 100 Z" fill="#ef4444" stroke="white" stroke-width="6" stroke-linejoin="round" />
+                </svg>
+            </div>
+          `,
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+          popupAnchor: [0, -20]
         });
 
         // สร้าง Marker
@@ -166,6 +194,17 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         userMarkerRef.current.setLatLng(newLatLng);
         userMarkerRef.current.setPopupContent(`🚗 รถส่งของ (ความแม่นยำ ${Math.round(accuracy)} ม.)`);
         
+        // หมุนลูกศร (Rotation)
+        if (heading !== null && !isNaN(heading)) {
+            const iconElement = userMarkerRef.current.getElement();
+            if (iconElement) {
+                const arrowDiv = iconElement.querySelector('#user-heading-arrow');
+                if (arrowDiv) {
+                    arrowDiv.style.transform = `rotate(${heading}deg)`;
+                }
+            }
+        }
+        
         if (accuracyCircleRef.current) {
             accuracyCircleRef.current.setLatLng(newLatLng);
             accuracyCircleRef.current.setRadius(accuracy);
@@ -178,12 +217,17 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     }
   };
 
-  const drawRoute = async (destLat: number, destLng: number) => {
+  const drawRoute = async (destLat: number, destLng: number, isBackgroundUpdate = false) => {
     if (!mapInstanceRef.current) return;
     const L = window.L;
 
-    document.body.style.cursor = 'wait';
-    onShowToast("กำลังคำนวณเส้นทาง...", "info");
+    // บันทึกเป้าหมายปัจจุบันไว้ เพื่อใช้คำนวณใหม่ตอนรถขยับ
+    activeDestinationRef.current = { lat: destLat, lng: destLng };
+
+    if (!isBackgroundUpdate) {
+        document.body.style.cursor = 'wait';
+        onShowToast("กำลังคำนวณเส้นทาง...", "info");
+    }
 
     // 1. เตรียมพิกัดเริ่มต้น (อยู่นอก Try/Catch เพื่อให้ Fallback ใช้งานได้)
     let startLat = SHOP_LOCATION.lat;
@@ -198,7 +242,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
       usingShopLocation = false;
     } else if ('geolocation' in navigator && isTracking) {
       try {
-         // ลองขอ GPS ล่าสุดแบบเร็วๆ (Timeout 2 วินาที)
+         // ลองขอ GPS ล่าสุดแบบเร็วๆ
          const position: any = await new Promise((resolve, reject) => {
             navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 2000, enableHighAccuracy: false });
          });
@@ -206,25 +250,30 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
          startLng = position.coords.longitude;
          usingShopLocation = false;
       } catch (e) {
-         console.log("Quick GPS for route failed, using shop/last known");
+         // Fail silently on background update
+         if (!isBackgroundUpdate) console.log("Quick GPS for route failed, using shop/last known");
       }
     } 
 
-    if (usingShopLocation) {
+    // บันทึกจุดที่ใช้คำนวณล่าสุด
+    lastRouteCalcPosRef.current = { lat: startLat, lng: startLng };
+
+    if (usingShopLocation && !isBackgroundUpdate) {
        onShowToast("ไม่พบพิกัดปัจจุบัน ใช้ตำแหน่งร้านเป็นจุดเริ่ม", "info");
     }
 
     // --- SMART ROUTING: ตรวจสอบระยะทางก่อน ---
     const distanceMeters = getDistanceMeters(startLat, startLng, destLat, destLng);
     
-    // ถ้าใกล้กว่า 100 เมตร: ไม่ต้องใช้ API, วาดเส้นตรงเลย (ป้องกันการพาอ้อม)
+    // ถ้าใกล้กว่า 100 เมตร: ไม่ต้องใช้ API, วาดเส้นตรงเลย
     if (distanceMeters < 100) {
         if (routeLayerRef.current) mapInstanceRef.current.removeLayer(routeLayerRef.current);
         
-        onShowToast(`อยู่ใกล้เป้าหมาย (${Math.round(distanceMeters)} ม.)`, "success");
+        if (!isBackgroundUpdate) onShowToast(`อยู่ใกล้เป้าหมาย (${Math.round(distanceMeters)} ม.)`, "success");
+        setRouteStats({ distance: `${Math.round(distanceMeters)} ม.`, duration: 'ใกล้ถึงแล้ว' });
 
         routeLayerRef.current = L.polyline([[startLat, startLng], [destLat, destLng]], {
-            color: '#10b981', // สีเขียว (ใกล้ถึงแล้ว)
+            color: '#10b981', // สีเขียว
             weight: 6,
             opacity: 0.9,
             dashArray: '1, 10',
@@ -237,16 +286,18 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
           }
         }, 100);
 
-        mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [100, 100] });
+        if (!isBackgroundUpdate) {
+            mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [100, 100] });
+        }
         document.body.style.cursor = 'default';
-        return; // จบการทำงานทันที ไม่ต้องเรียก API
+        return; 
     }
 
     try {
-      // 2. พยายามขอเส้นทางจาก OSRM (Server ฟรี)
+      // 2. พยายามขอเส้นทางจาก OSRM
       const response = await fetchWithRetry(
         `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson`,
-        1, // Retry แค่ 1 ครั้งพอ ถ้าไม่ได้ให้ไป Fallback เลย จะได้ไม่รอนาน
+        1, 
         1000
       );
 
@@ -254,6 +305,11 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
       if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
         const routeGeoJSON = data.routes[0].geometry;
+        
+        // ดึงข้อมูลระยะทางและเวลา
+        const distKm = (data.routes[0].distance / 1000).toFixed(1);
+        const durMin = Math.ceil(data.routes[0].duration / 60);
+        setRouteStats({ distance: `${distKm} กม.`, duration: `${durMin} นาที` });
 
         if (routeLayerRef.current) {
           mapInstanceRef.current.removeLayer(routeLayerRef.current);
@@ -267,17 +323,18 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
             opacity: 0.8,
             lineCap: 'round',
             lineJoin: 'round',
-            dashArray: '1, 10', 
+            dashArray: isBackgroundUpdate ? null : '1, 10', 
           }
         }).addTo(mapInstanceRef.current);
 
-        setTimeout(() => {
-           if(routeLayerRef.current) {
-             routeLayerRef.current.setStyle({ dashArray: null });
-           }
-        }, 100);
-
-        mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [50, 50] });
+        if (!isBackgroundUpdate) {
+            setTimeout(() => {
+                if(routeLayerRef.current) {
+                    routeLayerRef.current.setStyle({ dashArray: null });
+                }
+            }, 100);
+            mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [50, 50] });
+        }
         
       } else {
         throw new Error("No route found from API");
@@ -285,22 +342,27 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     } catch (error) {
       console.warn("Routing API Failed, switching to fallback line:", error);
       
-      // 3. Fallback Mode: วาดเส้นตรงสีส้ม (Dashed Line) ถ้า Server ล่ม
+      // 3. Fallback Mode: วาดเส้นตรง
       if (routeLayerRef.current) {
         mapInstanceRef.current.removeLayer(routeLayerRef.current);
       }
       
-      onShowToast("⚠️ ระบบนำทางขัดข้องชั่วคราว แสดงเส้นทางตรงแทน", "info");
+      if (!isBackgroundUpdate) onShowToast("⚠️ ระบบนำทางขัดข้องชั่วคราว แสดงเส้นทางตรงแทน", "info");
+      
+      // คำนวณคร่าวๆ (เส้นตรง)
+      setRouteStats({ distance: `${(distanceMeters/1000).toFixed(1)} กม.`, duration: '-' });
 
       routeLayerRef.current = L.polyline([[startLat, startLng], [destLat, destLng]], {
-         color: '#f97316', // สีส้ม
+         color: '#f97316', 
          weight: 5,
          opacity: 0.8,
-         dashArray: '10, 10', // เส้นประ
+         dashArray: '10, 10',
          lineCap: 'round'
       }).addTo(mapInstanceRef.current);
 
-      mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [50, 50] });
+      if (!isBackgroundUpdate) {
+        mapInstanceRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [50, 50] });
+      }
 
     } finally {
       document.body.style.cursor = 'default';
@@ -345,8 +407,8 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
           fallbackTimeoutRef.current = null;
         }
 
-        const { latitude, longitude, accuracy } = position.coords;
-        updateUserMarker(latitude, longitude, accuracy);
+        const { latitude, longitude, accuracy, heading } = position.coords;
+        updateUserMarker(latitude, longitude, accuracy, heading);
       },
       (error) => {
         console.warn("GPS Error:", error.code);
@@ -406,6 +468,15 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     directionLinesRef.current.forEach(line => line.remove());
     directionLinesRef.current = [];
 
+    // Reset Route State
+    activeDestinationRef.current = null;
+    lastRouteCalcPosRef.current = null;
+    setRouteStats(null);
+    if (routeLayerRef.current && mapInstanceRef.current) {
+        mapInstanceRef.current.removeLayer(routeLayerRef.current);
+        routeLayerRef.current = null;
+    }
+
     releaseWakeLock();
     setIsTracking(false);
     shouldAutoPanRef.current = false; // Reset
@@ -440,7 +511,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 if (!userMarkerRef.current) {
-                  updateUserMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+                  updateUserMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy, pos.coords.heading);
                 }
             },
             (err) => { /* Ignore errors from kickstart */ },
@@ -458,10 +529,14 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     resetToShop: () => {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.setView([SHOP_LOCATION.lat, SHOP_LOCATION.lng], 16, { animate: true });
+        
+        // Reset Route UI but maybe keep destination? No, better clear it for fresh start.
         if (routeLayerRef.current) {
           mapInstanceRef.current.removeLayer(routeLayerRef.current);
           routeLayerRef.current = null;
         }
+        activeDestinationRef.current = null;
+        setRouteStats(null);
       }
     }
   }));
@@ -587,7 +662,35 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
   }, [points, onDeletePoint, onFinishJob, onShowToast]);
 
-  return <div className="relative w-full h-full"><div ref={mapContainerRef} className="w-full h-full z-0" /></div>;
+  return (
+    <div className="relative w-full h-full">
+        <div ref={mapContainerRef} className="w-full h-full z-0" />
+        
+        {/* Route Statistics Panel */}
+        {routeStats && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl border border-blue-100 p-3 z-[1000] flex items-center gap-4 animate-in fade-in slide-in-from-top-4">
+                <div className="flex items-center gap-2 pr-4 border-r border-slate-200">
+                    <div className="p-2 bg-blue-100 rounded-full">
+                        <Navigation className="w-5 h-5 text-blue-600 fill-blue-600" />
+                    </div>
+                    <div>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">ระยะทาง</p>
+                        <p className="text-xl font-black text-slate-800 leading-none">{routeStats.distance}</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-emerald-100 rounded-full">
+                         <Clock className="w-5 h-5 text-emerald-600" />
+                    </div>
+                     <div>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">เวลาโดยประมาณ</p>
+                        <p className="text-xl font-black text-slate-800 leading-none">{routeStats.duration}</p>
+                    </div>
+                </div>
+            </div>
+        )}
+    </div>
+  );
 });
 
 MapViewer.displayName = 'MapViewer';
