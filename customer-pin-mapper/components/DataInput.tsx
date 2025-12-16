@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CustomerPoint } from '../types';
 import { Plus, Trash2, HelpCircle, Download, FileText, ExternalLink, X, Settings, Link as LinkIcon } from 'lucide-react';
+import { DEFAULT_SCRIPT_URL } from '../App'; // Import ค่า Default มาแสดง
 
 interface DataInputProps {
   onDataParsed: (data: CustomerPoint[], append: boolean) => void;
@@ -28,7 +29,8 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points, isOp
   // โหลด URL จาก LocalStorage เมื่อ component ถูก mount
   useEffect(() => {
     const savedUrl = localStorage.getItem('googleScriptUrl');
-    if (savedUrl) setScriptUrl(savedUrl);
+    // ถ้ามีค่าที่ Save ไว้ให้ใช้ท่านั้น ถ้าไม่มีให้ใช้ค่า Default ที่เราฝังไว้
+    setScriptUrl(savedUrl || DEFAULT_SCRIPT_URL);
   }, []);
 
   // บันทึก URL ลง LocalStorage เมื่อมีการเปลี่ยนแปลง
@@ -243,7 +245,7 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points, isOp
                   className="w-full p-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none font-mono text-gray-600"
                 />
                 <p className="text-[10px] text-gray-400 mt-2">
-                   * ใส่ URL ที่ได้จากการ Deploy Web App ใน Google Sheet เพื่อให้อัปเดตสถานะ "ส่งสำเร็จ" กลับไปยัง Sheet โดยอัตโนมัติ
+                   * ระบบใช้ลิงก์นี้ในการอัปเดตสถานะ "ส่งสำเร็จ" กลับไปยัง Sheet โดยอัตโนมัติ
                 </p>
               </div>
             )}

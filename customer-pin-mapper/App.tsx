@@ -8,6 +8,9 @@ import { HistoryViewer } from './components/HistoryViewer';
 import { CustomerPoint, MapViewerHandle, DeliveryRecord } from './types';
 import { Navigation, Store, List, Loader2, History } from 'lucide-react';
 
+// ✅ ฝังลิงก์ Google Script ไว้ที่นี่เลย เพื่อให้ทำงานได้ทันทีโดยไม่ต้องตั้งค่า
+export const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwqfQlMXQ_LIBAD9Fx4yGsXz1eXWtKoOSxvyR9NOnw2Wi_Y4MkTllUYQBJFTWmDDzM7/exec";
+
 const App: React.FC = () => {
   // 1. Initialize Points
   const [points, setPoints] = useState<CustomerPoint[]>(() => {
@@ -78,34 +81,34 @@ const App: React.FC = () => {
 
   // Function to update Google Sheet Status via Web App
   const updateGoogleSheetStatus = async (customerName: string) => {
-    const scriptUrl = localStorage.getItem('googleScriptUrl');
-    if (!scriptUrl) return; // ถ้าไม่ได้ตั้งค่าไว้ ก็ข้ามไป
+    // ใช้ URL จาก LocalStorage ถ้ามี ถ้าไม่มีให้ใช้ค่า Default ที่เราฝังไว้
+    const scriptUrl = localStorage.getItem('googleScriptUrl') || DEFAULT_SCRIPT_URL;
+    
+    console.log("Sending update to:", scriptUrl);
 
     try {
-      handleShowToast("กำลังอัปเดตสถานะใน Google Sheet...", "info");
-      
-      // Send POST request to Google Apps Script
-      // Note: 'no-cors' is required for simple requests to GAS from browser, 
-      // response will be opaque but action will trigger.
+      // payload ข้อมูลที่จะส่ง
+      const payload = {
+        name: customerName.trim(), // ตัดช่องว่างหน้าหลังออกเพื่อความแม่นยำ
+        status: 'DELIVERED',
+        timestamp: new Date().toLocaleString('th-TH')
+      };
+
+      // ใช้ text/plain แทน application/json เพื่อเลี่ยง CORS Preflight
       await fetch(scriptUrl, {
         method: 'POST',
         mode: 'no-cors', 
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'text/plain;charset=utf-8', 
         },
-        body: JSON.stringify({
-          name: customerName,
-          status: 'DELIVERED',
-          timestamp: new Date().toLocaleString('th-TH')
-        })
+        body: JSON.stringify(payload)
       });
       
-      // เนื่องจาก no-cors เราเช็ค response.ok ไม่ได้ แต่ถ้าไม่มี error ก็ถือว่าส่งออกไปแล้ว
       console.log(`Sent update for ${customerName} to Google Sheet`);
       
     } catch (error) {
       console.error("Failed to update Google Sheet:", error);
-      handleShowToast("ไม่สามารถอัปเดต Google Sheet ได้", "error");
+      handleShowToast("การเชื่อมต่อ Google Sheet ขัดข้อง", "error");
     }
   };
 
@@ -132,6 +135,12 @@ const App: React.FC = () => {
 
     setFinishingPoint(null);
     handleShowToast("🎉 ส่งงานสำเร็จ! บันทึกรูปภาพแล้ว", "success");
+  };
+
+  // ฟังก์ชันลบประวัติ (รองรับทั้งลบตัวเดียว และลบหลายตัว)
+  const handleDeleteHistory = (ids: string[]) => {
+    setHistory((prev) => prev.filter((item) => !ids.includes(item.id)));
+    handleShowToast(`ลบประวัติ ${ids.length} รายการเรียบร้อย`, "info");
   };
 
   const toggleTracking = () => {
@@ -217,7 +226,7 @@ const App: React.FC = () => {
       {isHistoryOpen && (
         <HistoryViewer 
           history={history} 
-          onClearHistory={() => setHistory([])}
+          onDeleteHistory={handleDeleteHistory}
           onClose={() => setIsHistoryOpen(false)} 
         />
       )}
@@ -230,7 +239,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Quick Return Button (Floating) - Moved higher to bottom-36 */}
+      {/* Quick Return Button (Floating) */}
       <button
         onClick={resetToShop}
         className="fixed bottom-36 right-4 bg-white p-3 rounded-full shadow-lg border border-slate-200 text-orange-600 z-[1000] hover:bg-orange-50 active:scale-90 transition-all"
