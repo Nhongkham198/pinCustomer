@@ -8,7 +8,7 @@ import { HistoryViewer } from './components/HistoryViewer';
 import { CustomerPoint, MapViewerHandle, DeliveryRecord } from './types';
 import { Navigation, Store, List, Loader2, History } from 'lucide-react';
 
-// ✅ ฝังลิงก์ Google Script ไว้ที่นี่เลย เพื่อให้ทำงานได้ทันทีโดยไม่ต้องตั้งค่า
+// ✅ ลิงก์ล่าสุดที่คุณให้มา (บังคับใช้ลิงก์นี้)
 export const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwqfQlMXQ_LIBAD9Fx4yGsXz1eXWtKoOSxvyR9NOnw2Wi_Y4MkTllUYQBJFTWmDDzM7/exec";
 
 const App: React.FC = () => {
@@ -47,6 +47,18 @@ const App: React.FC = () => {
     localStorage.setItem('deliveryHistory', JSON.stringify(history));
   }, [history]);
 
+  // 🔥 FORCE UPDATE SCRIPT URL 🔥
+  // โค้ดส่วนนี้จะทำงานทุกครั้งที่เปิดแอป เพื่อบังคับให้ใช้ URL ใหม่ล่าสุดเสมอ แก้ปัญหาลิงก์เก่าค้าง
+  useEffect(() => {
+    if (DEFAULT_SCRIPT_URL) {
+       const currentSaved = localStorage.getItem('googleScriptUrl');
+       if (currentSaved !== DEFAULT_SCRIPT_URL) {
+          console.log("Updating Script URL to latest version...");
+          localStorage.setItem('googleScriptUrl', DEFAULT_SCRIPT_URL);
+       }
+    }
+  }, []);
+
   // Handlers
   const handleShowToast = (message: string, type: ToastType) => {
     setToast({ message, type });
@@ -80,21 +92,27 @@ const App: React.FC = () => {
   };
 
   // Function to update Google Sheet Status via Web App
-  const updateGoogleSheetStatus = async (customerName: string) => {
-    // ใช้ URL จาก LocalStorage ถ้ามี ถ้าไม่มีให้ใช้ค่า Default ที่เราฝังไว้
-    const scriptUrl = localStorage.getItem('googleScriptUrl') || DEFAULT_SCRIPT_URL;
+  const updateGoogleSheetStatus = async (originalName: string) => {
+    // บังคับใช้ DEFAULT_SCRIPT_URL เพื่อความชัวร์
+    const scriptUrl = DEFAULT_SCRIPT_URL; 
     
-    console.log("Sending update to:", scriptUrl);
+    // 🛠️ Logic ช่วยเติมคำนำหน้า: เพิ่มโอกาสหาชื่อเจอใน Sheet
+    // เช่น ในแอปชื่อ "ต้น" แต่ใน Sheet ชื่อ "คุณต้น" -> ถ้าเราส่ง "คุณต้น" ไป Google Script จะหาเจอทั้งคู่
+    let nameToSend = originalName.trim();
+    const noPrefixNeeded = /^(ร้าน|บริษัท|หจก|โรงเรียน|วัด|ธนาคาร|คุณ|Mr\.|Ms\.|Mrs\.)/.test(nameToSend);
+    if (!noPrefixNeeded) {
+        nameToSend = `คุณ${nameToSend}`;
+    }
+
+    console.log(`Sending update for: "${nameToSend}" to ${scriptUrl}`);
 
     try {
-      // payload ข้อมูลที่จะส่ง
       const payload = {
-        name: customerName.trim(), // ตัดช่องว่างหน้าหลังออกเพื่อความแม่นยำ
+        name: nameToSend, 
         status: 'DELIVERED',
         timestamp: new Date().toLocaleString('th-TH')
       };
 
-      // ใช้ text/plain แทน application/json เพื่อเลี่ยง CORS Preflight
       await fetch(scriptUrl, {
         method: 'POST',
         mode: 'no-cors', 
@@ -104,11 +122,11 @@ const App: React.FC = () => {
         body: JSON.stringify(payload)
       });
       
-      console.log(`Sent update for ${customerName} to Google Sheet`);
+      console.log(`Successfully sent signal to Google Sheet`);
       
     } catch (error) {
       console.error("Failed to update Google Sheet:", error);
-      handleShowToast("การเชื่อมต่อ Google Sheet ขัดข้อง", "error");
+      handleShowToast("ไม่สามารถอัปเดต Google Sheet ได้ (โปรดเช็คอินเทอร์เน็ต)", "error");
     }
   };
 
@@ -116,7 +134,7 @@ const App: React.FC = () => {
   const handleConfirmFinishJob = (photoDataUrl: string) => {
     if (!finishingPoint) return;
 
-    // 1. Update Google Sheet (Fire and forget)
+    // 1. Update Google Sheet
     updateGoogleSheetStatus(finishingPoint.name);
 
     const record: DeliveryRecord = {
