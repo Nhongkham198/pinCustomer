@@ -58,7 +58,7 @@ const App: React.FC = () => {
       return;
     }
     if (append) {
-      setPoints(prev => [...prev, ...newPoints]);
+      setPoints((prev: CustomerPoint[]) => [...prev, ...newPoints]);
       handleShowToast(`เพิ่มลูกค้าใหม่ ${newPoints.length} รายเรียบร้อย`, "success");
     } else {
       setPoints(newPoints);
@@ -67,7 +67,7 @@ const App: React.FC = () => {
   };
 
   const handleDeletePoint = (id: string) => {
-    setPoints(prev => prev.filter(p => p.id !== id));
+    setPoints((prev: CustomerPoint[]) => prev.filter((p: CustomerPoint) => p.id !== id));
     handleShowToast("ลบหมุดเรียบร้อย", "info");
   };
 
@@ -76,9 +76,45 @@ const App: React.FC = () => {
     setFinishingPoint(point);
   };
 
+  // Function to update Google Sheet Status via Web App
+  const updateGoogleSheetStatus = async (customerName: string) => {
+    const scriptUrl = localStorage.getItem('googleScriptUrl');
+    if (!scriptUrl) return; // ถ้าไม่ได้ตั้งค่าไว้ ก็ข้ามไป
+
+    try {
+      handleShowToast("กำลังอัปเดตสถานะใน Google Sheet...", "info");
+      
+      // Send POST request to Google Apps Script
+      // Note: 'no-cors' is required for simple requests to GAS from browser, 
+      // response will be opaque but action will trigger.
+      await fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors', 
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: customerName,
+          status: 'DELIVERED',
+          timestamp: new Date().toLocaleString('th-TH')
+        })
+      });
+      
+      // เนื่องจาก no-cors เราเช็ค response.ok ไม่ได้ แต่ถ้าไม่มี error ก็ถือว่าส่งออกไปแล้ว
+      console.log(`Sent update for ${customerName} to Google Sheet`);
+      
+    } catch (error) {
+      console.error("Failed to update Google Sheet:", error);
+      handleShowToast("ไม่สามารถอัปเดต Google Sheet ได้", "error");
+    }
+  };
+
   // Triggered when photo is captured and confirmed
   const handleConfirmFinishJob = (photoDataUrl: string) => {
     if (!finishingPoint) return;
+
+    // 1. Update Google Sheet (Fire and forget)
+    updateGoogleSheetStatus(finishingPoint.name);
 
     const record: DeliveryRecord = {
       id: `history-${Date.now()}`,
@@ -89,10 +125,10 @@ const App: React.FC = () => {
     };
 
     // Save to history
-    setHistory(prev => [...prev, record]);
+    setHistory((prev: DeliveryRecord[]) => [...prev, record]);
     
     // Remove from active points
-    setPoints(prev => prev.filter(p => p.id !== finishingPoint.id));
+    setPoints((prev: CustomerPoint[]) => prev.filter((p: CustomerPoint) => p.id !== finishingPoint.id));
 
     setFinishingPoint(null);
     handleShowToast("🎉 ส่งงานสำเร็จ! บันทึกรูปภาพแล้ว", "success");

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CustomerPoint } from '../types';
-import { Plus, Trash2, HelpCircle, Download, FileText, ExternalLink, X } from 'lucide-react';
+import { Plus, Trash2, HelpCircle, Download, FileText, ExternalLink, X, Settings, Link as LinkIcon } from 'lucide-react';
 
 interface DataInputProps {
   onDataParsed: (data: CustomerPoint[], append: boolean) => void;
@@ -20,6 +20,23 @@ const SAMPLE_DATA = `2025-12-14	06:34:59	#01	คุณต้น	...	...	...	http
 export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points, isOpen, onClose }) => {
   const [inputText, setInputText] = useState('');
   const [appendMode, setAppendMode] = useState(true);
+  
+  // State สำหรับ Web App URL
+  const [showScriptConfig, setShowScriptConfig] = useState(false);
+  const [scriptUrl, setScriptUrl] = useState('');
+
+  // โหลด URL จาก LocalStorage เมื่อ component ถูก mount
+  useEffect(() => {
+    const savedUrl = localStorage.getItem('googleScriptUrl');
+    if (savedUrl) setScriptUrl(savedUrl);
+  }, []);
+
+  // บันทึก URL ลง LocalStorage เมื่อมีการเปลี่ยนแปลง
+  const handleScriptUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const url = e.target.value;
+    setScriptUrl(url);
+    localStorage.setItem('googleScriptUrl', url);
+  };
 
   const extractCoordsFromUrl = (url: string): { lat: number, lng: number } | null => {
     try {
@@ -135,7 +152,7 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points, isOp
 
   return (
     <div className="fixed inset-0 z-[2000] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
         <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
           <div>
             <h2 className="text-xl font-bold text-gray-800">นำเข้าข้อมูลลูกค้า</h2>
@@ -191,16 +208,46 @@ export const DataInput: React.FC<DataInputProps> = ({ onDataParsed, points, isOp
               className="whitespace-nowrap flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold shadow-sm transition-all text-sm"
             >
               <ExternalLink className="w-4 h-4" />
-              เปิด Google Sheet ของฉัน
+              เปิด Google Sheet
             </a>
           </div>
 
           <textarea
-            className="w-full h-48 p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm whitespace-pre"
+            className="w-full h-40 p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm whitespace-pre"
             placeholder="วางข้อมูลที่นี่... (เช่น: คุณสมชาย ... https://maps.google.com/...)"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
           />
+
+          {/* Config Section for Real-time Updates */}
+          <div className="mt-4 border-t border-gray-100 pt-4">
+            <button 
+              onClick={() => setShowScriptConfig(!showScriptConfig)}
+              className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-blue-600 transition-colors mb-2"
+            >
+              <Settings className="w-4 h-4" />
+              {showScriptConfig ? 'ซ่อนการตั้งค่าเชื่อมต่อ Google Sheet' : 'ตั้งค่าการเชื่อมต่อ Google Sheet (Real-time Update)'}
+            </button>
+            
+            {showScriptConfig && (
+              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 animate-in fade-in slide-in-from-top-2">
+                <label className="block text-xs font-bold text-gray-700 mb-2 flex items-center gap-2">
+                   <LinkIcon className="w-3 h-3" /> 
+                   Google Apps Script Web App URL
+                </label>
+                <input 
+                  type="text" 
+                  value={scriptUrl} 
+                  onChange={handleScriptUrlChange}
+                  placeholder="https://script.google.com/macros/s/..../exec"
+                  className="w-full p-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none font-mono text-gray-600"
+                />
+                <p className="text-[10px] text-gray-400 mt-2">
+                   * ใส่ URL ที่ได้จากการ Deploy Web App ใน Google Sheet เพื่อให้อัปเดตสถานะ "ส่งสำเร็จ" กลับไปยัง Sheet โดยอัตโนมัติ
+                </p>
+              </div>
+            )}
+          </div>
 
           <div className="flex flex-col sm:flex-row gap-4 mt-4 justify-between items-center">
              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 w-full sm:w-auto hover:bg-gray-100 transition-colors">
