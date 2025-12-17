@@ -48,6 +48,22 @@
         -webkit-user-select: text; 
         user-select: text; 
       }
+
+      /* --- 3D NAVIGATION MODE STYLES --- */
+      /* เอียงแผนที่เมื่อมี Class .mode-3d */
+      .leaflet-container.mode-3d .leaflet-map-pane {
+        transform: perspective(600px) rotateX(55deg) scale(1.6) translateY(-15%);
+        transform-origin: center 80%; /* จุดหมุนอยู่ด้านล่าง (ตำแหน่งรถ) */
+        transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); /* Animation นุ่มนวล */
+      }
+      
+      /* ทำให้ Marker ดูแบนราบไปกับถนนในโหมด 3D (ถ้าไม่ชอบให้เอาออก) */
+      /* หรือถ้าต้องการให้ Marker ตั้งฉาก ต้องใช้เทคนิคขั้นสูงซึ่ง Leaflet ทำได้ยาก */
+      
+      /* ซ่อน Attribution ในโหมด 3D เพื่อความสะอาดตา */
+      .leaflet-container.mode-3d .leaflet-control-attribution {
+        opacity: 0.2;
+      }
     </style>
   <script type="importmap">
 {

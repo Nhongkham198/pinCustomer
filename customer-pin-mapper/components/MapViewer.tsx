@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { CustomerPoint, MapViewerHandle } from '../types';
-import { Navigation, Clock } from 'lucide-react';
+import { Navigation, Clock, Box, Layers } from 'lucide-react';
 
 interface MapViewerProps {
   points: CustomerPoint[];
@@ -30,6 +30,9 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   
   // State สำหรับ Tracking
   const [isTracking, setIsTracking] = useState(false);
+  
+  // State สำหรับโหมด 3D
+  const [is3DMode, setIs3DMode] = useState(false);
   
   // State สำหรับข้อมูลเส้นทาง (ระยะทาง/เวลา)
   const [routeStats, setRouteStats] = useState<{ distance: string, duration: string } | null>(null);
@@ -479,9 +482,27 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
     releaseWakeLock();
     setIsTracking(false);
+    setIs3DMode(false); // ปิดโหมด 3D อัตโนมัติเมื่อหยุดนำทาง
     shouldAutoPanRef.current = false; // Reset
     if (onTrackingChange) onTrackingChange(false);
   };
+
+  // Toggle 3D Mode Function
+  const toggle3DMode = () => {
+    setIs3DMode(prev => !prev);
+  };
+
+  // Effect to apply 3D CSS class
+  useEffect(() => {
+    if (mapContainerRef.current) {
+      if (is3DMode) {
+        mapContainerRef.current.classList.add('mode-3d');
+        onShowToast("เปิดมุมมอง 3D (Driver View)", "info");
+      } else {
+        mapContainerRef.current.classList.remove('mode-3d');
+      }
+    }
+  }, [is3DMode, onShowToast]);
 
   useImperativeHandle(ref, () => ({
     toggleTracking: () => {
@@ -503,6 +524,7 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         }
 
         setIsTracking(true);
+        setIs3DMode(true); // 🔥 Auto-enable 3D mode when tracking starts
         shouldAutoPanRef.current = true; // เปิด Auto Pan เมื่อเริ่ม
         if (onTrackingChange) onTrackingChange(true);
         requestWakeLock();
@@ -664,8 +686,18 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
   return (
     <div className="relative w-full h-full">
-        <div ref={mapContainerRef} className="w-full h-full z-0" />
+        <div ref={mapContainerRef} className="w-full h-full z-0 transition-transform duration-700 ease-in-out" />
         
+        {/* Toggle 2D/3D Button */}
+        <button 
+          onClick={toggle3DMode}
+          className="absolute top-24 left-3 z-[1000] bg-white p-2 rounded-lg shadow-md border border-gray-200 text-gray-700 hover:bg-gray-50 active:scale-95 transition-all"
+          title={is3DMode ? "สลับเป็น 2D" : "สลับเป็น 3D"}
+        >
+            {is3DMode ? <Layers className="w-6 h-6 text-blue-600" /> : <Box className="w-6 h-6" />}
+            <span className="sr-only">Toggle 3D</span>
+        </button>
+
         {/* Route Statistics Panel */}
         {routeStats && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl border border-blue-100 p-3 z-[1000] flex items-center gap-4 animate-in fade-in slide-in-from-top-4">
