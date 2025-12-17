@@ -44,11 +44,15 @@ export const Toast: React.FC<ToastProps> = ({ message, type, onClose }) => {
   return (
     <div className={`fixed top-4 left-4 right-4 z-[3000] flex items-start gap-3 p-4 rounded-xl border shadow-2xl transition-all animate-[slideIn_0.3s_ease-out] ${style.bg} ${style.border}`}>
       {style.icon}
-      <div className={`flex-1 text-sm font-bold whitespace-pre-line leading-relaxed ${style.text}`}>
+      <div className={`flex-1 text-sm font-bold whitespace-pre-line leading-relaxed pt-0.5 ${style.text}`}>
         {message}
       </div>
-      <button onClick={onClose} className="p-1 hover:bg-black/5 rounded-full transition-colors">
-        <X className="w-5 h-5 opacity-40" />
+      <button 
+        onClick={onClose} 
+        className="p-2 -mr-2 -mt-2 hover:bg-black/10 rounded-full transition-colors active:scale-95 touch-manipulation"
+        aria-label="Close notification"
+      >
+        <X className="w-6 h-6 opacity-60" />
       </button>
       <style>{`
         @keyframes slideIn {

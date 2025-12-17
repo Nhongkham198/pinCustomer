@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MapViewer } from './components/MapViewer';
 import { DataInput } from './components/DataInput';
 import { Header } from './components/Header';
@@ -60,9 +60,11 @@ const App: React.FC = () => {
   }, []);
 
   // Handlers
-  const handleShowToast = (message: string, type: ToastType) => {
+  // 🟢 FIXED: ใช้ useCallback เพื่อป้องกันไม่ให้ฟังก์ชันถูกสร้างใหม่ทุกครั้งที่หน้าจอขยับ
+  // ซึ่งจะแก้ปัญหา Toast เด้งซ้ำๆ ใน MapViewer
+  const handleShowToast = useCallback((message: string, type: ToastType) => {
     setToast({ message, type });
-  };
+  }, []);
 
   const handleDataParsed = (newPoints: CustomerPoint[], append: boolean) => {
     if (newPoints.length === 0 && !append) {
