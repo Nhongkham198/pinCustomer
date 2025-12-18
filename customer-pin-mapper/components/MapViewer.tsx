@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { CustomerPoint, MapViewerHandle } from '../types';
-import { Navigation, Clock, Box, Layers, ArrowRight, ArrowLeft, ArrowUp, MapPin, AlertTriangle } from 'lucide-react';
+import { Navigation, Clock, Box, Layers, ArrowRight, ArrowLeft, ArrowUp, MapPin, AlertTriangle, ExternalLink } from 'lucide-react';
 
 interface MapViewerProps {
   points: CustomerPoint[];
@@ -233,7 +233,6 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
 
         shouldAutoPanRef.current = true;
         mapInstanceRef.current.setView([lat, lng], 18, { animate: true }); 
-        onShowToast(`เริ่มนำทาง!`, "success");
 
     } else {
         const newLatLng = new L.LatLng(lat, lng);
@@ -374,7 +373,9 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
   const toggle3DMode = () => {
     setIs3DMode(prev => {
         const next = !prev;
-        if (!next && mapContainerRef.current) {
+        if (next) {
+            onShowToast("เปิดโหมดนำทาง 3D", "info");
+        } else if (mapContainerRef.current) {
             mapContainerRef.current.style.setProperty('--map-bearing', '0deg');
         }
         return next;
@@ -385,12 +386,11 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
     if (mapContainerRef.current) {
       if (is3DMode) {
         mapContainerRef.current.classList.add('mode-3d');
-        onShowToast("เปิดโหมดนำทาง 3D", "info");
       } else {
         mapContainerRef.current.classList.remove('mode-3d');
       }
     }
-  }, [is3DMode, onShowToast]);
+  }, [is3DMode]);
 
   useImperativeHandle(ref, () => ({
     toggleTracking: () => {
@@ -404,6 +404,8 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         if (onTrackingChange) onTrackingChange(true);
         requestWakeLock();
         startWatchingPosition(true);
+        onShowToast("เริ่มนำทาง!", "success");
+        onShowToast("เปิดโหมดนำทาง 3D", "info");
       }
     },
     resetToShop: () => {
@@ -480,6 +482,10 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
             <button class="btn-in-app-route block w-full bg-indigo-600 hover:bg-indigo-700 text-white text-lg font-bold py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 mb-1">
                นำทาง (ในแอป)
             </button>
+            <button class="btn-external-maps block w-full bg-slate-800 hover:bg-black text-white text-lg font-bold py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 mb-1">
+               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+               Google Maps (ภายนอก)
+            </button>
             <button class="btn-finish-job block w-full bg-emerald-500 hover:bg-emerald-600 text-white text-lg font-bold py-3 px-4 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 mb-1">
                ✅ ส่งสำเร็จ (ถ่ายรูป)
             </button>
@@ -491,6 +497,14 @@ export const MapViewer = forwardRef<MapViewerHandle, MapViewerProps>(({ points, 
         if (routeBtn) {
           routeBtn.addEventListener('click', () => { drawRoute(point.lat, point.lng); map.closePopup(); });
         }
+        
+        const externalBtn = popupContent.querySelector('.btn-external-maps');
+        if (externalBtn) {
+          externalBtn.addEventListener('click', () => {
+            window.open(`https://www.google.com/maps?q=${point.lat},${point.lng}`, '_blank');
+          });
+        }
+
         const finishBtn = popupContent.querySelector('.btn-finish-job');
         if (finishBtn) {
           finishBtn.addEventListener('click', () => { onFinishJob(point); map.closePopup(); });
